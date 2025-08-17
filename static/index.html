@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>UFW 防火墙管理 · 控制台</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{ --bg1:#0b1020; --bg2:#0f1630; --card:#111a33aa; --muted:#aab3c0; --accent:#7dd3fc; --accent-2:#a78bfa; --border:#1f2a44; --glow:0 0 24px rgba(125,211,252,.35); }
+    *{box-sizing:border-box} html,body{height:100%}
+    body{margin:0; font:14px/1.6 system-ui,Segoe UI,Roboto,Helvetica,Arial; color:#e6edf6;
+      background: radial-gradient(1200px 800px at 70% -10%, #1b2550 0%, transparent 60%), linear-gradient(180deg, var(--bg1), var(--bg2));}
+    .container{max-width:1220px; margin:36px auto; padding:0 16px;}
+    .title{display:flex; align-items:center; gap:10px; margin:0 0 18px;}
+    .dot{width:10px;height:10px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-2)); box-shadow:var(--glow);}
+    .subtitle{color:var(--muted); margin:-6px 0 20px}
+    .grid{display:grid; gap:16px; grid-template-columns:1fr;} @media(min-width:1100px){ .grid{grid-template-columns:1fr 1fr;} }
+    .card{ backdrop-filter: blur(10px); background: var(--card); border:1px solid var(--border);
+      border-radius:16px; padding:16px; box-shadow: 0 10px 30px rgba(0,0,0,.3);}
+    .card h3{margin:0 0 12px}
+    .row{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+    input[type="text"], input[type="number"], select{ background:#0e1833; border:1px solid #233258; color:#e6edf6;
+      padding:10px 12px; border-radius:12px; min-width:180px; outline:none}
+    input:focus, select:focus{ border-color: var(--accent); box-shadow: var(--glow) }
+    button{ background: linear-gradient(135deg, #1a2b55, #132446); border:1px solid #234; color:#e6f7ff;
+      padding:10px 14px; border-radius:12px; cursor:pointer; transition:transform .03s ease}
+    button:hover{ border-color:var(--accent); box-shadow: var(--glow) }
+    button:active{ transform: scale(0.98) }
+    .muted{ color:var(--muted); font-size:12px}
+    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    pre{ background:#0b142b; border:1px dashed #24365f; border-radius:12px; padding:12px; overflow:auto; max-height:320px; }
+    table{ width:100%; border-collapse:separate; border-spacing:0; font-size:13px; }
+    thead th{ position:sticky; top:0; background:#0f1a36; border-bottom:1px solid #24365f; cursor:pointer; padding:10px; text-align:left;}
+    tbody td{ padding:10px; border-bottom:1px dashed #1e2e54;} tbody tr:hover{ background:#0f1b38;}
+    ul{ list-style:none; padding-left:0; margin:8px 0 0}
+    ul li{ padding:8px 10px; border:1px dashed #233a66; border-radius:10px; margin:8px 0; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .flag{ font-size:16px; margin-right:6px}
+    .topbar{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; margin-bottom:14px }
+    .error{ background:#3b0f19; border:1px solid #5e1e2c; color:#ffb4c1; border-radius:10px; padding:8px 10px; margin:10px 0; display:none}
+    .toast{ position:fixed; right:16px; bottom:16px; background:#122145; border:1px solid #2a3d74; color:#d7eaff; padding:10px 12px; border-radius:12px; display:none}
+    .badge{ display:inline-block; padding:2px 8px; border-radius:10px; border:1px solid #345; background:#0d1b36; font-size:12px; margin-left:6px}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 class="title"><span class="dot"></span> UFW 防火墙管理 · 控制台</h1>
+    <div class="subtitle">
+      状态：<span id="ufwStat">在线</span>
+      <span class="badge">严格化：移除所有 Anywhere 放行（面板端口除外）</span>
+      <button id="strictBtn" onclick="strictify()">执行</button>
+      <span class="badge">面板端口：</span>
+      <input id="panelPort" type="number" min="1" max="65535" value="__PANEL_PORT__" style="width:120px">
+      <button onclick="savePanelPort()">保存并重启</button>
+    </div>
+
+    <div id="err" class="error"></div>
+    <div id="toast" class="toast"></div>
+
+    <div class="topbar">
+      <div class="row">
+        <button type="button" onclick="loadAll()">⟳ 刷新数据</button>
+        <button type="button" onclick="logout()">⇦ 退出登录</button>
+      </div>
+      <div class="row muted">提示：面板端口始终放行（避免锁死）。</div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h3>UFW 规则列表</h3>
+        <pre id="ports" class="mono">加载中…</pre>
+      </div>
+
+      <div class="card">
+        <h3>端口与 IP 控制</h3>
+        <div class="row" style="margin-bottom:8px">
+          <input id="port" type="text" placeholder="端口如 22 / 443"/>
+          <button id="btnOpenPort" type="button" onclick="openPort()">放行端口（仅白名单）</button>
+        </div>
+        <div class="row" style="margin-bottom:8px">
+          <input id="searchport" type="text" placeholder="查询端口占用，如 80"/>
+          <button id="btnPortSearch" type="button" onclick="portSearch()">搜索占用</button>
+        </div>
+        <pre id="portsearch" class="mono">--</pre>
+        <div class="row">
+          <input id="ip" type="text" placeholder="IP 地址，如 8.8.8.8"/>
+          <button id="btnAllowIP" type="button" onclick="allowIP()">允许（插入优先）</button>
+          <button id="btnBlockIP" type="button" onclick="blockIP()">封禁</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>白名单（FIFO≤1000，持久化）</h3>
+        <div class="row" style="margin-bottom:8px">
+          <input id="wlip" type="text" placeholder="白名单IP，如 1.2.3.4"/>
+          <button id="btnAddWL" type="button" onclick="addWL()">加入白名单</button>
+          <a href="/export/whitelist" target="_blank"><button type="button">下载白名单</button></a>
+        </div>
+        <form method="post" action="/import/whitelist" enctype="multipart/form-data" class="row" style="margin-bottom:8px">
+          <input type="file" name="file" accept=".txt">
+          <button type="submit">上传并导入</button>
+        </form>
+        <ul id="wl">加载中…</ul>
+      </div>
+
+      <div class="card">
+        <h3>日志与设置</h3>
+        <div class="row" style="margin-bottom:8px">
+          <a href="/export/logs" target="_blank"><button type="button">下载日志</button></a>
+        </div>
+        <div class="row">
+          <label class="muted">日志大小上限 (MB)：</label>
+          <input id="logmb" type="number" min="1" value="__LOG_MB__">
+          <button id="btnLogLimit" type="button" onclick="setLogLimit()">保存上限并轮转</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid" style="margin-top:16px">
+      <div class="card">
+        <h3>实时流量 & 速度</h3>
+        <div class="mono">累计总流量：<span id="acc">--</span></div>
+        <div class="mono">当前速度：<span id="speed">--</span></div>
+        <pre id="ifstat" class="mono">--</pre>
+      </div>
+
+      <div class="card">
+        <h3>网络探测（ICMP/TCP/UDP，支持域名，多端口/常用端口）</h3>
+        <div class="row" style="margin-bottom:8px">
+          <input id="ckhosts" type="text" placeholder="目标IP或域名，多个用逗号分隔，如: 8.8.8.8,example.com">
+          <select id="ckmode">
+            <option value="icmp">ICMP</option>
+            <option value="tcp">TCP</option>
+            <option value="udp">UDP</option>
+          </select>
+          <input id="ckports" type="text" placeholder="端口列表，如 80,443 或填 common（ICMP忽略端口）">
+          <button id="btnCheck" type="button" onclick="doCheck()">开始检测</button>
+        </div>
+        <pre id="ckresult" class="mono">--</pre>
+      </div>
+
+      <div class="card">
+        <h3>Speedtest（单次/连续）</h3>
+        <div class="row" style="margin-bottom:8px">
+          <select id="stmode">
+            <option value="single">单次</option>
+            <option value="multi">连续(5次平均)</option>
+          </select>
+          <input id="stsize" type="number" min="1" value="20" style="width:120px"> <span class="muted">MB</span>
+          <button id="btnDL" onclick="doDL()">下载测速</button>
+          <button id="btnUL" onclick="doUL()">上传测速</button>
+          <button id="btnStop" onclick="stopST()">停止</button>
+        </div>
+        <pre id="stout" class="mono">--</pre>
+      </div>
+
+      <div class="card" style="grid-column: 1 / -1;">
+        <h3>活跃连接（可排序）</h3>
+        <div style="overflow:auto">
+          <table id="conntbl">
+            <thead>
+              <tr>
+                <th onclick="sortBy('proc')">进程</th>
+                <th onclick="sortBy('pid')">PID</th>
+                <th onclick="sortBy('laddr')">本地地址</th>
+                <th onclick="sortBy('raddr')">远端地址</th>
+                <th onclick="sortBy('status')">状态</th>
+                <th onclick="sortBy('geo')">地理信息</th>
+              </tr>
+            </thead>
+            <tbody id="connbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

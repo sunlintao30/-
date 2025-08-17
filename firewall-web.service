@@ -1,0 +1,18 @@
+[Unit]
+Description=Firewall Web (UFW Manager)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/firewall-web
+ExecStartPre=/usr/bin/mkdir -p /var/lib/firewall_web /var/log
+ExecStart=/opt/firewall-web/venv/bin/python /opt/firewall-web/launcher.py
+Restart=on-failure
+User=root
+Group=root
+AmbientCapabilities=CAP_NET_ADMIN
+NoNewPrivileges=false
+
+[Install]
+WantedBy=multi-user.target
