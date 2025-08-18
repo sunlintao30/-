@@ -140,6 +140,11 @@ def apply_whitelist_rules():
     for ip in list(whitelist):
         ufw_allow_from_ip_any(ip)
 
+# 初始化防火墙规则，确保面板端口对所有 IP 放行
+ufw_allow_anywhere(state.get("panel_port", DEFAULT_PORT))
+apply_forward_rules()
+apply_whitelist_rules()
+
 # ---- Auth helpers ----
 def check_basic_header(request: Request):
     auth = request.headers.get("Authorization","")
