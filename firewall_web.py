@@ -8,11 +8,12 @@ import os, subprocess, time, json, ipaddress, tempfile, datetime, asyncio, socke
 import psutil, requests
 from collections import deque
 
-APP_DIR = "/opt/firewall-web"
-STATE_DIR = "/var/lib/firewall_web"
+# 使用脚本所在目录作为应用根目录，所有持久化文件均位于此
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+STATE_DIR = os.path.join(APP_DIR, "state")
 STATE_FILE = os.path.join(STATE_DIR, "state.json")
 WHITELIST_FILE = os.path.join(APP_DIR, "whitelist.json")
-LOG_FILE = "/var/log/firewall_web.log"
+LOG_FILE = os.path.join(APP_DIR, "firewall_web.log")
 GEO_MMDB = os.path.join(APP_DIR, "GeoLite2-City.mmdb")
 GEO_MMDB_URL = "https://git.io/GeoLite2-City.mmdb"
 DEFAULT_PORT = 48080
@@ -23,10 +24,10 @@ COMMON_PORTS = [21,22,23,25,53,67,68,69,80,110,123,137,139,143,161,389,443,465,5
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.add_middleware(SessionMiddleware, secret_key="change_me_strong", session_cookie="fw_session", same_site="lax", https_only=False, max_age=7*24*3600)
-app.mount("/static", StaticFiles(directory=APP_DIR + "/static"), name="static")
+app.mount("/static", StaticFiles(directory=os.path.join(APP_DIR, "static")), name="static")
 
 USERNAME="admin"
-PASSWORD="123456"
+PASSWORD="admin"
 
 def ensure_dirs():
     os.makedirs(STATE_DIR, exist_ok=True)
@@ -64,6 +65,18 @@ def wl_save(arr):
 
 whitelist = deque(wl_load(), maxlen=MAX_WL)
 apply_forward_rules()
+<<<<<<< ours
+<<<<<<< ours
+=======
+
+# 恢复白名单对应的 UFW 规则
+apply_whitelist_rules()
+>>>>>>> theirs
+=======
+
+# 恢复白名单对应的 UFW 规则
+apply_whitelist_rules()
+>>>>>>> theirs
 
 def rotate_log_if_needed():
     try:
