@@ -67,6 +67,7 @@ whitelist = deque(wl_load(), maxlen=MAX_WL)
 apply_forward_rules()
 <<<<<<< ours
 <<<<<<< ours
+<<<<<<< ours
 =======
 
 # 恢复白名单对应的 UFW 规则
@@ -76,6 +77,21 @@ apply_whitelist_rules()
 
 # 恢复白名单对应的 UFW 规则
 apply_whitelist_rules()
+>>>>>>> theirs
+=======
+
+# 恢复白名单对应的 UFW 规则
+apply_whitelist_rules()
+
+@app.middleware("http")
+async def ip_whitelist_middleware(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/static") or path.startswith("/login"):
+        return await call_next(request)
+    ip = normalize_ip(request.client.host)
+    if ip in whitelist or request.session.get("logged_in") or check_basic_header(request):
+        return await call_next(request)
+    return JSONResponse({"detail":"非白名单 IP"}, status_code=403)
 >>>>>>> theirs
 
 def rotate_log_if_needed():

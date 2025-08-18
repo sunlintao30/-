@@ -1,5 +1,7 @@
 import os, json, subprocess, sys
-STATE_FILE = "/var/lib/firewall_web/state.json"
+
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+STATE_FILE = os.path.join(APP_DIR, "state", "state.json")
 DEFAULT_PORT = 48080
 def load_port():
     try:
