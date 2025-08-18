@@ -55,6 +55,7 @@ async function loadAll(){
     let c = await (await fetch('/api/connections', {credentials:'include'})).json();
     connData = c.connections||[]; renderConn();
   }catch(e){ showErr('获取连接信息失败'); }
+  await loadForwards();
 }
 function sortBy(k){ if (connSortKey===k) connSortAsc=!connSortAsc; else {connSortKey=k; connSortAsc=true;} renderConn(); }
 function renderConn(){
@@ -84,14 +85,16 @@ async function strictify(){
   finally{ disable(btn,false); }
 }
 
-async function savePanelPort(){
-  const p = parseInt(document.getElementById('panelPort').value||'0',10);
-  if(!(p>=1 && p<=65535)){ toast('端口不合法'); return; }
-  const form = new FormData(); form.append('port', String(p));
+async function savePanelCred(){
+  const u=document.getElementById('panelUser').value.trim();
+  const p=document.getElementById('panelPass').value;
+  const port=parseInt(document.getElementById('panelPort').value||'0',10);
+  if(!u || !p || !(port>=1 && port<=65535)){ toast('请输入有效的用户名、密码和端口'); return; }
+  const form=new FormData(); form.append('username',u); form.append('password',p); form.append('port',String(port));
   try{
-    const res = await fetch('/api/panel/set', {method:'POST', credentials:'include', body: form});
-    const js = await res.json();
-    if(js.status==='ok'){ toast('已保存端口，服务将自动重启到 '+p); }
+    const res=await fetch('/api/panel/cred',{method:'POST',credentials:'include',body:form});
+    const js=await res.json();
+    if(js.status==='ok'){ toast('已保存，服务将自动重启'); }
     else{ showErr(js.error || '保存失败'); }
   }catch(e){ showErr('保存失败'); }
 }
@@ -124,6 +127,37 @@ async function setLogLimit(){ const btn=document.getElementById('btnLogLimit'); 
     if(isNaN(mb)||mb<1){ toast('请输入正确的 MB 数值'); return; }
     let r=await fetch('/api/loglimit/'+mb,{method:'POST',credentials:'include'}); if(!r.ok) throw 0; toast('已保存日志上限并检查轮转');
   }catch(e){ showErr('设置失败'); } finally{ disable(btn,false); } }
+
+async function loadForwards(){
+  try{
+    let res=await fetch('/api/forward/list',{credentials:'include'}); if(!res.ok) throw 0;
+    let data=await res.json();
+    let ul=document.getElementById('fwds'); if(!ul) return; ul.innerHTML='';
+    let arr=data.forwards||[];
+    if(arr.length===0){ ul.innerHTML='<li class="muted">（无转发规则）</li>'; }
+    else{ arr.forEach(f=>{ let li=document.createElement('li'); li.innerHTML=`<span class="mono">${f.src_port} → ${f.dst_ip}:${f.dst_port}</span><div><button onclick="delForward(${f.src_port})">删除</button></div>`; ul.appendChild(li); }); }
+  }catch(e){ showErr('加载转发规则失败'); }
+}
+async function addForward(){
+  const sp=parseInt(document.getElementById('fSrc').value||'0',10);
+  const dip=document.getElementById('fDstIP').value.trim();
+  const dp=parseInt(document.getElementById('fDstPort').value||'0',10);
+  if(!dip || !(sp>=1&&sp<=65535) || !(dp>=1&&dp<=65535)){ toast('请输入有效的端口/IP'); return; }
+  const form=new FormData(); form.append('src_port',String(sp)); form.append('dst_ip',dip); form.append('dst_port',String(dp));
+  try{
+    let res=await fetch('/api/forward/add',{method:'POST',credentials:'include',body:form});
+    let js=await res.json();
+    if(js.status==='ok'){ toast('已添加'); loadForwards(); }
+    else{ showErr(js.error||'添加失败'); }
+  }catch(e){ showErr('添加失败'); }
+}
+async function delForward(sp){
+  try{
+    let r=await fetch('/api/forward/delete/'+sp,{method:'POST',credentials:'include'});
+    if(!r.ok){ showErr('删除失败'); return; }
+    toast('已删除'); loadForwards();
+  }catch(e){ showErr('删除失败'); }
+}
 async function portSearch(){
   const btn=document.getElementById('btnPortSearch'); disable(btn,true);
   try{

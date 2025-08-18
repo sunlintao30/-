@@ -47,9 +47,6 @@
       状态：<span id="ufwStat">在线</span>
       <span class="badge">严格化：移除所有 Anywhere 放行（面板端口除外）</span>
       <button id="strictBtn" onclick="strictify()">执行</button>
-      <span class="badge">面板端口：</span>
-      <input id="panelPort" type="number" min="1" max="65535" value="__PANEL_PORT__" style="width:120px">
-      <button onclick="savePanelPort()">保存并重启</button>
     </div>
 
     <div id="err" class="error"></div>
@@ -110,6 +107,27 @@
           <label class="muted">日志大小上限 (MB)：</label>
           <input id="logmb" type="number" min="1" value="__LOG_MB__">
           <button id="btnLogLimit" type="button" onclick="setLogLimit()">保存上限并轮转</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>端口转发</h3>
+        <div class="row" style="margin-bottom:8px">
+          <input id="fSrc" type="number" placeholder="外部端口">
+          <input id="fDstIP" type="text" placeholder="目标 IP">
+          <input id="fDstPort" type="number" placeholder="目标端口">
+          <button onclick="addForward()">添加</button>
+        </div>
+        <ul id="fwds">加载中…</ul>
+      </div>
+
+      <div class="card">
+        <h3>面板设置</h3>
+        <div class="row">
+          <input id="panelUser" type="text" placeholder="用户名" value="__PANEL_USER__">
+          <input id="panelPass" type="password" placeholder="新密码">
+          <input id="panelPort" type="number" min="1" max="65535" value="__PANEL_PORT__" style="width:120px">
+          <button onclick="savePanelCred()">保存并重启</button>
         </div>
       </div>
     </div>

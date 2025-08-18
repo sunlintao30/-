@@ -37,6 +37,9 @@ def state_load():
         with open(STATE_FILE,"r") as f: s=json.load(f)
     except: s={}
     s.setdefault("panel_port", DEFAULT_PORT)
+    s.setdefault("username", USERNAME)
+    s.setdefault("password", PASSWORD)
+    s.setdefault("forwards", [])
     s.setdefault("acc_rx", 0); s.setdefault("acc_tx", 0)
     s.setdefault("last_rx", 0); s.setdefault("last_tx", 0); s.setdefault("last_ts", 0.0)
     s.setdefault("log_max_bytes", 5*1024*1024)
@@ -46,6 +49,8 @@ def state_save(s):
     with open(STATE_FILE,"w") as f: json.dump(s,f)
 
 state = state_load()
+USERNAME = state.get("username", USERNAME)
+PASSWORD = state.get("password", PASSWORD)
 
 def wl_load():
     try:
@@ -58,6 +63,7 @@ def wl_save(arr):
     with open(WHITELIST_FILE,"w") as f: json.dump(arr[:MAX_WL], f)
 
 whitelist = deque(wl_load(), maxlen=MAX_WL)
+apply_forward_rules()
 
 def rotate_log_if_needed():
     try:
@@ -104,6 +110,31 @@ def normalize_ip(ip):
     if "%" in ip: return ip.split("%",1)[0]
     return ip
 
+def apply_forward_rules():
+    try:
+        for l in run("iptables -t nat -S PREROUTING").splitlines():
+            if "fw-web-forward" in l:
+                subprocess.run("iptables -t nat " + l.replace("-A","-D",1), shell=True)
+        for l in run("iptables -t nat -S POSTROUTING").splitlines():
+            if "fw-web-forward" in l:
+                subprocess.run("iptables -t nat " + l.replace("-A","-D",1), shell=True)
+    except: pass
+    try:
+        for line in run("ufw status numbered").splitlines():
+            if "]" in line and "fw-web-forward" in line:
+                try:
+                    num=int(line.split("]")[0].strip("[ "))
+                    ufw_delete_rule_number(num)
+                except: pass
+    except: pass
+    for f in state.get("forwards", []):
+        try:
+            sp=int(f.get("src_port")); dip=f.get("dst_ip"); dp=int(f.get("dst_port"))
+            subprocess.run(f"iptables -t nat -A PREROUTING -p tcp --dport {sp} -j DNAT --to-destination {dip}:{dp} -m comment --comment fw-web-forward", shell=True)
+            subprocess.run(f"iptables -t nat -A POSTROUTING -p tcp -d {dip} --dport {dp} -j MASQUERADE -m comment --comment fw-web-forward", shell=True)
+            subprocess.run(f"ufw route allow proto tcp from any to {dip} port {dp} comment 'fw-web-forward'", shell=True)
+        except: pass
+
 def apply_whitelist_rules():
     # 还原白名单对应的「全端口放行」
     for ip in list(whitelist):
@@ -136,6 +167,44 @@ def require_auth(request: Request):
     if request.session.get("logged_in"): return True
     if check_basic_header(request): return True
     raise HTTPException(status_code=401, detail="unauthorized")
+
+def current_user(request: Request):
+    if request.session.get("logged_in"): return USERNAME
+    auth=request.headers.get("Authorization","")
+    if auth.startswith("Basic "):
+        try:
+            up=base64.b64decode(auth.split(" ",1)[1]).decode("utf-8","ignore")
+            return up.split(":",1)[0]
+        except: pass
+    return "-"
+
+def audit(action):
+    def decorator(func):
+        if asyncio.iscoroutinefunction(func):
+            async def wrapper(*args, **kwargs):
+                request=kwargs.get("request")
+                if request is None:
+                    for a in args:
+                        if isinstance(a, Request):
+                            request=a; break
+                user=current_user(request) if request else "-"
+                ip=normalize_ip(request.client.host) if request else "-"
+                log_action(user, ip, action.format(**kwargs))
+                return await func(*args, **kwargs)
+            return wrapper
+        else:
+            def wrapper(*args, **kwargs):
+                request=kwargs.get("request")
+                if request is None:
+                    for a in args:
+                        if isinstance(a, Request):
+                            request=a; break
+                user=current_user(request) if request else "-"
+                ip=normalize_ip(request.client.host) if request else "-"
+                log_action(user, ip, action.format(**kwargs))
+                return func(*args, **kwargs)
+            return wrapper
+    return decorator
 
 # ---- Geo helpers ----
 _geo_reader=None; geo_cache_local={}; geo_cache_online={}
@@ -197,7 +266,7 @@ def geo_both(ip):
 
 # ---- Pages ----
 def login_html():
-    return """<!doctype html><html lang='zh-CN'><head>
+    return f"""<!doctype html><html lang='zh-CN'><head>
 <meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
 <title>登录 · UFW 控制台</title>
 <style>
@@ -216,13 +285,13 @@ def login_html():
     <h2>登录 · 防火墙控制台</h2>
     <form method="post" action="/login">
       <label>用户名</label>
-      <input name="username" value="admin" autocomplete="username">
+      <input name="username" value="{USERNAME}" autocomplete="username">
       <label>密码</label>
-      <input type="password" name="password" value="123456" autocomplete="current-password">
+      <input type="password" name="password" autocomplete="current-password">
       <button type="submit">登录</button>
     </form>
     <div class="tip muted">命令行（自动登录并加入白名单）：<br>
-      <code>curl -u admin:123456 http://主机:端口/api/ports</code>
+      <code>curl -u {USERNAME}:密码 http://主机:端口/api/ports</code>
     </div>
   </div>
 </body></html>"""
@@ -236,6 +305,7 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
     ip = normalize_ip(request.client.host)
     if username==USERNAME and password==PASSWORD:
         request.session["logged_in"]=True
+        log_action(username, ip, "login success")
         try:
             ipaddress.ip_address(ip)
             if ip not in whitelist:
@@ -243,10 +313,13 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
                 whitelist.append(ip); wl_save(list(whitelist)); ufw_allow_from_ip_any(ip)
         except: pass
         return RedirectResponse("/", 302)
+    log_action(username, ip, "login failed")
     return HTMLResponse(login_html().replace("</form>","</form><div class='muted' style='color:#ffb4c1'>用户名或密码错误</div>"), status_code=401)
 
 @app.get("/logout")
 def logout(request: Request):
+    ip=normalize_ip(request.client.host)
+    log_action(current_user(request), ip, "logout")
     request.session.clear()
     return RedirectResponse("/login")
 
@@ -258,23 +331,75 @@ def index(request: Request):
         return RedirectResponse("/login")
     html=open(APP_DIR+"/static/index.html","r",encoding="utf-8").read()
     html = html.replace("__PANEL_PORT__", str(state.get("panel_port", DEFAULT_PORT)))
+    html = html.replace("__PANEL_USER__", USERNAME)
     html = html.replace("__LOG_MB__", str(round(state.get("log_max_bytes",5*1024*1024)/1024/1024)))
     return html
 
 # ---- Panel get/set ----
-@app.get("/api/panel/get")
-def api_panel_get(request: Request):
-    require_auth(request); return {"panel_port": state.get("panel_port", DEFAULT_PORT)}
+@app.get("/api/panel/cred")
+def api_panel_cred_get(request: Request):
+    require_auth(request); return {"username": USERNAME, "panel_port": state.get("panel_port", DEFAULT_PORT)}
 
 @app.post("/api/panel/set")
+@audit("panel port set {port}")
 def api_panel_set(request: Request, port: int = Form(...)):
     require_auth(request)
-    port=int(port); 
+    port=int(port);
     if port<1 or port>65535: return JSONResponse({"error":"invalid port"}, status_code=400)
     state["panel_port"]=port; state_save(state)
     subprocess.run(f"ufw allow {port}/tcp comment 'fw-web-panel'", shell=True)  # 永久放行新端口
     threading.Thread(target=lambda: (time.sleep(1), os._exit(3))).start()
     return {"status":"ok","msg":"端口已保存，服务即将自动重启生效","panel_port":port}
+
+@app.post("/api/panel/cred")
+@audit("panel cred set user {username} port {port}")
+def api_panel_cred_set(request: Request, username: str = Form(...), password: str = Form(...), port: int = Form(...)):
+    require_auth(request)
+    port=int(port)
+    if port<1 or port>65535 or not username or not password:
+        return JSONResponse({"error":"invalid params"}, status_code=400)
+    state["panel_port"]=port
+    state["username"]=username
+    state["password"]=password
+    state_save(state)
+    global USERNAME, PASSWORD
+    USERNAME=username; PASSWORD=password
+    subprocess.run(f"ufw allow {port}/tcp comment 'fw-web-panel'", shell=True)
+    threading.Thread(target=lambda: (time.sleep(1), os._exit(3))).start()
+    return {"status":"ok","panel_port":port,"username":username}
+
+# ---- Port forward APIs ----
+@app.get("/api/forward/list")
+def api_forward_list(request: Request):
+    require_auth(request)
+    return {"forwards": state.get("forwards", [])}
+
+@app.post("/api/forward/add")
+@audit("forward add {src_port}->{dst_ip}:{dst_port}")
+def api_forward_add(request: Request, src_port: int = Form(...), dst_ip: str = Form(...), dst_port: int = Form(...)):
+    require_auth(request)
+    try:
+        ipaddress.ip_address(dst_ip)
+    except:
+        return JSONResponse({"error":"invalid ip"}, status_code=400)
+    src_port=int(src_port); dst_port=int(dst_port)
+    if not (1<=src_port<=65535 and 1<=dst_port<=65535):
+        return JSONResponse({"error":"invalid port"}, status_code=400)
+    forwards=[f for f in state.get("forwards", []) if f.get("src_port")!=src_port]
+    forwards.append({"src_port":src_port,"dst_ip":dst_ip,"dst_port":dst_port})
+    state["forwards"]=forwards; state_save(state)
+    apply_forward_rules()
+    return {"status":"ok"}
+
+@app.post("/api/forward/delete/{src_port}")
+@audit("forward delete {src_port}")
+def api_forward_delete(src_port: int, request: Request):
+    require_auth(request)
+    src_port=int(src_port)
+    forwards=[f for f in state.get("forwards", []) if f.get("src_port")!=src_port]
+    state["forwards"]=forwards; state_save(state)
+    apply_forward_rules()
+    return {"status":"ok"}
 
 # ---- UFW APIs ----
 @app.get("/api/ports")
@@ -282,6 +407,7 @@ def api_ports(request: Request):
     require_auth(request); return {"rules": run("ufw status numbered").splitlines()}
 
 @app.post("/api/open/{port}")
+@audit("open port {port}")
 def api_open_port(port: int, request: Request):
     require_auth(request)
     for ip in list(whitelist): ufw_allow_from_ip_port(ip, port)
@@ -303,6 +429,7 @@ def api_wl(request: Request):
     return {"whitelist":res}
 
 @app.post("/api/whitelist/{ip}")
+@audit("whitelist add {ip}")
 def api_wl_add(ip: str, request: Request):
     require_auth(request)
     ip=normalize_ip(ip)
@@ -315,6 +442,7 @@ def api_wl_add(ip: str, request: Request):
     return {"status": f"{ip} added"}
 
 @app.post("/api/whitelist/delete/{ip}")
+@audit("whitelist delete {ip}")
 def api_wl_del(ip: str, request: Request):
     require_auth(request)
     ip=normalize_ip(ip)
@@ -328,6 +456,7 @@ def api_wl_del(ip: str, request: Request):
     return {"status": f"{ip} removed"}
 
 @app.post("/api/ufw/strictify")
+@audit("strictify")
 def api_strictify(request: Request):
     require_auth(request)
     panel = state.get("panel_port", DEFAULT_PORT)
@@ -375,6 +504,7 @@ def export_logs(request: Request):
     return FileResponse(LOG_FILE, filename="firewall.log", media_type="text/plain")
 
 @app.post("/api/loglimit/{mb}")
+@audit("set log limit {mb}MB")
 def set_log_limit(mb: int, request: Request):
     require_auth(request)
     state["log_max_bytes"]=max(1,int(mb))*1024*1024; state_save(state)
